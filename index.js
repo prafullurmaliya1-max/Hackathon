@@ -5,7 +5,7 @@ const cors = require('cors');
 const { Pool } = require('pg');
 
 const app = express();
-const PORT = process.env.PORT || 8080;
+const PORT = 8080;
 
 // 1. सबसे पहले हर Request को Log करो (ताकि पता चले टेस्टर आ रहा है या नहीं)
 app.use((req, res, next) => {
@@ -62,3 +62,4 @@ app.all('/api/chat', async (req, res) => {
 app.get('/', (req, res) => res.send("<h1>Ramesh AI is LIVE! 🚀</h1>"));
 
 app.listen(PORT, () => console.log(`🚀 FINAL SERVER RUNNING ON PORT ${PORT}`));
+
