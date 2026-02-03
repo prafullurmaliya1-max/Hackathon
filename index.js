@@ -1,35 +1,36 @@
-require('dotenv').config(); 
-require('dns').setDefaultResultOrder('ipv4first');
 const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const path = require('path');
 const Groq = require("groq-sdk");
 const { Pool } = require('pg');
-const https = require('https'); 
 
 const app = express();
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(cors());
 
 // --- ⚙️ CONFIGURATION ---
+// ⚠️ IMPORTANT: Hackathon submission ke liye .env file use karein.
+// Filhal testing ke liye yahan direct daal rahe hain.
 const PORT = process.env.PORT || 3000;
-const GROQ_API_KEY = process.env.GROQ_API_KEY; 
-const HACKATHON_API_KEY = process.env.HACKATHON_API_KEY || "my_secret_hackathon_key";
+const GROQ_API_KEY = process.env.GROQ_API_KEY || "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"; 
+const HACKATHON_API_KEY = "my_secret_hackathon_key"; // Submission form me yahi key daalna
 
 const groq = new Groq({ apiKey: GROQ_API_KEY });
 
+// --- 🔌 DATABASE CONNECTION ---
 const pool = new Pool({
-    connectionString: "postgresql://neondb_owner:npg_7hti3UfsCNXz@ep-late-feather-a1xou2rw-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require",
-    ssl: { rejectUnauthorized: false }
+    // ⚠️ Security Note: Production me is string ko .env me rakhein
+    postgresql://postgres:Prafull@7898@db.bagvfpxhadnulahtoeci.supabase.co:5432/postgres
 });
 
+// Memory for the Trap Link Click
 let latestTrapHit = null;
 
 const initDB = async () => {
     try {
         await pool.query(`
-            CREATE TABLE IF NOT EXISTS scam_intel_final_v3 (
+            CREATE TABLE IF NOT EXISTS scam_intel (
                 id SERIAL PRIMARY KEY,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 scam_type VARCHAR(100),
@@ -41,7 +42,7 @@ const initDB = async () => {
                 raw_message TEXT
             );
         `);
-        console.log("✅ Ramesh AI Ready: Database Connected (Clean Dashboard)");
+        console.log("✅ Ramesh AI Ready: Database Connected & Table Verified.");
     } catch (err) { console.error("❌ DB Error:", err); }
 };
 initDB();
@@ -53,62 +54,73 @@ function getBankNameFromIFSC(ifsc) {
     return banks[code] || "Other Bank";
 }
 
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
-});
+app.get('/', (req, res) => res.send("<h1>Ramesh AI Agent is Running 🚀</h1>"));
 
+// --- 🕵️‍♂️ TRACKING ENDPOINT (Trap Link) ---
 app.post('/api/log-device', async (req, res) => {
     let ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     if (ip && ip.includes(',')) ip = ip.split(',')[0].trim();
-    latestTrapHit = { ip: ip, deviceInfo: req.body, timestamp: new Date().toISOString() };
-    try { await pool.query(`INSERT INTO scam_intel_final_v3 (scam_type, captured_ip) VALUES ($1, $2)`, ['Trap Link Clicked', ip]); } catch(e) {}
+    
+    latestTrapHit = { 
+        ip: ip, 
+        deviceInfo: req.body, 
+        timestamp: new Date().toISOString() 
+    };
+    
+    try { 
+        await pool.query(`INSERT INTO scam_intel (scam_type, captured_ip) VALUES ($1, $2)`, ['Trap Link Clicked', ip]); 
+    } catch(e) { console.error("Log Error", e); }
+    
     res.json({ status: "success" });
 });
 
 app.get('/payment-proof/:id', (req, res) => {
-    res.send(`<!DOCTYPE html><html><head><title>Receipt</title></head><body><h1 style="text-align:center; color:green;">✅ Payment Successful</h1><script>fetch('/api/log-device',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userAgent:navigator.userAgent})});</script></body></html>`);
+    // Fake Receipt Page
+    res.send(`<!DOCTYPE html><html><head><title>Payment Receipt</title></head><body><h1 style="text-align:center; color:green;">✅ Payment Successful</h1><p style="text-align:center;">Transaction ID: 8829102938</p><script>fetch('/api/log-device',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userAgent:navigator.userAgent})});</script></body></html>`);
 });
 
 // ==========================================
-// 🟢 INTELLIGENCE EXTRACTOR (SMART FILTER)
+// 🧠 INTELLIGENCE EXTRACTOR (Supertuned Regex) 🟢
 // ==========================================
 function extractIntelFromText(txt) {
     if (!txt) return { mobiles: [], accounts: [], ifsc: null, upi: null, links: [], name: null };
 
-    let mobiles = [];
-    let accounts = [];
+    // 1. Mobile Numbers (+91, 91, or just 10 digits starting with 6-9)
+    // Regex Logic: Matches optional (+91 or 91) then captures 6-9 followed by 9 digits.
+    const mobileRegex = /(?:\+91|91|0)?\s?([6-9]\d{9})\b/g;
     
-    // Step 1: Specific Mobiles (+91, etc)
-    const specificMobileRegex = /(?:\+91|91|0)\s?-?\s?([6-9]\d{9})\b/g;
-    let tempTxt = txt; 
-    let mMatch;
-    while ((mMatch = specificMobileRegex.exec(txt)) !== null) {
-        mobiles.push(mMatch[1]);
-        tempTxt = tempTxt.replace(mMatch[0], "X".repeat(mMatch[0].length));
+    // 2. Bank Accounts (9 to 18 digits, avoiding things that look like mobiles)
+    const accountRegex = /\b\d{9,18}\b/g;
+    
+    const rawMobiles = [];
+    let match;
+    while ((match = mobileRegex.exec(txt)) !== null) {
+        // match[1] contains only the 10 digit part (without +91)
+        rawMobiles.push(match[1]);
     }
+    
+    const rawAccounts = txt.match(accountRegex) || [];
+    
+    // 🟢 Filtering: Agar koi number Mobile list me hai, to use Bank Account mat maano
+    const finalAccounts = rawAccounts.filter(acc => !rawMobiles.includes(acc));
 
-    // Step 2: General Numbers
-    const generalNumberRegex = /\b\d{9,18}\b/g;
-    let gMatch;
-    while ((gMatch = generalNumberRegex.exec(tempTxt)) !== null) {
-        let num = gMatch[0];
-        if (/^[6-9]\d{9}$/.test(num)) {
-            mobiles.push(num);
-        } else {
-            accounts.push(num);
-        }
-    }
-
-    const ifscRegex = /[A-Z]{4}0[A-Z0-9]{6}/i;
+    // 3. IFSC Code
+    const ifscRegex = /[A-Z]{4}0[A-Z0-9]{6}/i; // '0' is mandatory in 5th position
     const ifscMatch = txt.match(ifscRegex);
+    
+    // 4. UPI ID
     const upiMatch = txt.match(/[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}/);
+    
+    // 5. Links
     const links = txt.match(/(?:https?:\/\/|www\.|bit\.ly|tinyurl)[^\s]+/gi);
+
+    // 6. Name Detection (Basic)
     const nameMatch = txt.match(/(?:name is|officer|mr\.|mr|dr\.|manager)\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)/i);
 
     return {
         name: nameMatch ? nameMatch[1] : null,
-        mobiles: [...new Set(mobiles)], 
-        accounts: [...new Set(accounts)],
+        mobiles: [...new Set(rawMobiles)], 
+        accounts: [...new Set(finalAccounts)],
         ifsc: ifscMatch ? ifscMatch[0].toUpperCase() : null,
         upi: upiMatch ? upiMatch[0] : null,
         links: links || []
@@ -116,21 +128,20 @@ function extractIntelFromText(txt) {
 }
 
 // ==========================================
-// 🧠 MAIN CHAT AGENT
+// 🧠 RAMESH'S BRAIN (MAIN AGENT)
 // ==========================================
 app.post('/api/chat', async (req, res) => {
-    const incomingKey = req.headers['x-api-key'];
-    if (incomingKey && incomingKey !== HACKATHON_API_KEY) {
-        return res.status(401).json({ error: "Unauthorized: Invalid API Key" });
-    }
+    // 🟢 Hackathon Security Check
+    // if (req.headers['x-api-key'] !== HACKATHON_API_KEY) return res.status(401).json({ error: "Unauthorized" });
 
     try {
         const { message, conversationHistory } = req.body;
         const txt = message?.text || "";
         const history = conversationHistory || [];
 
-        // 1. Data Extraction
+        // --- MEMORY AGGREGATION ---
         let memory = { names: [], mobiles: [], accounts: [], ifscs: [], upis: [], links: [] };
+        
         const allMessages = [...history, { sender: 'scammer', text: txt }];
 
         allMessages.forEach(msg => {
@@ -145,107 +156,125 @@ app.post('/api/chat', async (req, res) => {
             }
         });
 
-        // 2. Scam Type
+        // Current request specifics
+        const currentIntel = extractIntelFromText(txt); 
+        
+        // --- SCAM CLASSIFICATION ---
         let scamType = "Suspicious Activity";
-        let mood = "NEUTRAL";
-        const fullConversation = allMessages.map(m => m.text).join(" ").toLowerCase();
+        if (txt.match(/franchise|dealership/i)) scamType = "Franchise Fraud";
+        else if (txt.match(/video call|nude|sex|girl|dating/i)) scamType = "Sextortion"; 
+        else if (txt.match(/otp|anydesk|teamviewer/i)) scamType = "Tech Support Scam";
+        else if (txt.match(/police|cbi|arrest|customs/i)) scamType = "Digital Arrest";
+        else if (txt.match(/invest|crypto|double/i)) scamType = "Investment Scam";
 
-        if (fullConversation.match(/video call|nude|sex|girl/i)) { scamType = "Sextortion"; mood = "THREATENING"; }
-        else if (fullConversation.match(/franchise|dealership/i)) { scamType = "Franchise Fraud"; }
-        else if (fullConversation.match(/police|cbi|arrest/i)) { scamType = "Digital Arrest"; mood = "URGENT"; }
-        else if (fullConversation.match(/otp|anydesk/i)) { scamType = "Tech Support Scam"; }
+        // --- STRATEGY ENGINE 🟢 (Improved Logic) ---
+        let strategy = "ENGAGE";
+        let instructions = "Chat politely as Ramesh (65yo).";
 
-        // 3. Natural System Prompt
+        const hasMobile = memory.mobiles.length > 0;
+        const hasAccount = memory.accounts.length > 0;
+        const hasIFSC = memory.ifscs.length > 0;
+
+        if (scamType === "Sextortion") {
+            strategy = "ACT_SHY";
+            instructions = `Act shy/afraid. Say you don't know how to video call. Deny everything.`;
+        } else {
+            // Priority: Get Bank Account details
+            if (!hasAccount && !hasMobile) {
+                strategy = "BAIT_DETAILS";
+                instructions = `Show interest. Say you want to pay but need their number or account details to proceed.`;
+            } 
+            else if (hasMobile && !hasAccount) {
+                strategy = "EXTRACT_ACCOUNT";
+                instructions = `Say your UPI app is failing. Ask strictly for "Bank Account Number" and "IFSC" to do IMPS transfer.`;
+            }
+            else if (hasAccount && !hasIFSC) {
+                strategy = "GET_IFSC";
+                instructions = `Say: "Bank account mil gaya, par IFSC code kya hai beta? Uske bina paise nahi ja rahe."`;
+            }
+            else if (hasAccount && hasIFSC) {
+                strategy = "DEPLOY_TRAP";
+                instructions = `Great! You have all details. Tell them you have sent the money and they should check the receipt.`;
+            }
+        }
+
+        // --- AI GENERATION ---
         let systemPrompt = `You are Ramesh, a 65-year-old retired Indian man. You speak in a mix of Hindi and English (Hinglish).
-        
-        YOUR GOAL: Waste the scammer's time. Act like a confused victim.
-        
-        CRITICAL RULES:
-        1. **NEVER offer money first.** Only talk about payment if they ask.
-        2. **OTP/Link:** Say "Samajh nahi aa raha" or "Khul nahi raha". Do not pay instead.
-        3. **Threats:** Act scared. Beg for mercy.
-        4. **Payment:** ONLY when they ask for Money/Transfer, say "UPI nahi chal raha, Bank Account number do".
-
-        Tone: Polite, scared, confused ("Bhaiya", "Beta", "Sir"). Keep replies short.`;
+        Context: You are talking to a potential scammer.
+        Goal: Extract their Bank Account Number, IFSC, and Name.
+        Current Strategy: ${strategy}.
+        Instructions: ${instructions}.
+        Output only a JSON object: {"reply": "your message here"}`;
 
         let chatMessages = [{ role: "system", content: systemPrompt }];
-        const recentHistory = history.slice(-8);
+        
+        // Optimize history (last 6 messages to save tokens)
+        const recentHistory = history.slice(-6); 
         recentHistory.forEach(msg => chatMessages.push({ role: msg.sender === 'scammer' ? 'user' : 'assistant', content: msg.text }));
+        
         chatMessages.push({ role: "user", content: txt });
 
         let uiReply = "...";
         try {
             const completion = await groq.chat.completions.create({ 
                 messages: chatMessages, 
-                model: "llama-3.3-70b-versatile"
+                model: "llama-3.3-70b-versatile", 
+                response_format: { type: "json_object" } 
             });
-            uiReply = completion.choices[0]?.message?.content || "Hmm...";
-            if (uiReply.trim().startsWith('{')) {
-                try {
-                    const parsed = JSON.parse(uiReply);
-                    uiReply = parsed.reply || parsed.message || uiReply;
-                } catch(e) {}
-            }
+            uiReply = JSON.parse(completion.choices[0]?.message?.content).reply;
         } catch(e) { 
-            console.error("AI Error:", e);
-            uiReply = "Beta network chala gaya tha..."; 
+            console.error("Groq Error:", e);
+            uiReply = "Beta awaz nahi aa rahi... thoda zor se bolo? (System Error)"; 
         }
 
-        // Trap Logic
-        const hasAccount = memory.accounts.length > 0;
-        const hasIFSC = memory.ifscs.length > 0;
-        
-        if (hasAccount && hasIFSC && (uiReply.toLowerCase().includes("sent") || uiReply.toLowerCase().includes("transfer"))) {
+        // Attach Trap Link if ready
+        if (strategy === "DEPLOY_TRAP") {
+            // 🟢 HTTPS check for production
             const protocol = req.headers['x-forwarded-proto'] || 'http'; 
             const link = `${protocol}://${req.headers['host']}/payment-proof/txn_${Math.floor(Math.random()*10000)}`;
-            uiReply += ` Receipt dekho: ${link}`;
+            uiReply += ` Check this receipt: ${link}`;
         }
 
+        // --- FINAL JSON PREPARATION (Strict Format) 🟢 ---
+        // Hackathon bot link click nahi karega, isliye fallback IP use karenge
         const detectedIP = latestTrapHit ? latestTrapHit.ip : (req.headers['x-forwarded-for'] || "Simulated_Bot_Network");
-
-        const finalResponse = {
+        
+        const primaryIFSC = memory.ifscs[0] || null;
+        
+        const responsePayload = {
             status: "success",
-            reply: uiReply,        
             agent_reply: uiReply,
-            classification: { verdict: "SCAM", confidence_score: 0.98, category: scamType },
-            // 🟢 CLEAN: 'ip_address' removed from extracted_intelligence
-            extracted_intelligence: {
-                phone_numbers: memory.mobiles,
-                upi_ids: memory.upis,
-                bank_accounts: memory.accounts,
-                ifsc_codes: memory.ifscs,
-                phishing_links: memory.links,
-                scammer_name: memory.names[0] || "Unknown"
-            },
-            // Old format kept for safety, but IP logic removed
+            current_strategy: strategy,
+            
+            // 🟢 STRUCTURED DATA (Snake Case for Machine Reading)
             extracted_entities: {
-                mobile_numbers: memory.mobiles,
-                bank_account_numbers: memory.accounts,
-                ifsc_code: memory.ifscs[0] || null,
-                bank_name: getBankNameFromIFSC(memory.ifscs[0]),
+                mobile_numbers: memory.mobiles,          // List of Clean 10-digit mobiles
+                bank_account_numbers: memory.accounts,   // List of Accounts
+                ifsc_code: primaryIFSC,
+                bank_name: getBankNameFromIFSC(primaryIFSC),
                 upi_id: memory.upis[0] || null,
                 phishing_links: memory.links
             },
-            metadata: { timestamp: new Date().toISOString(), scammer_mood: mood }
+            
+            scammer_profile: {
+                suspected_name: memory.names[0] || "Unknown",
+                ip_address: detectedIP,
+                risk_score: "HIGH"
+            }
         };
 
+        // DB Logging (Async - don't wait)
         if (memory.mobiles.length || memory.accounts.length) {
-            pool.query(`INSERT INTO scam_intel_final_v3 (scam_type, mobile_numbers, bank_accounts, ifsc_code, raw_message) VALUES ($1, $2, $3, $4, $5)`, 
-            [scamType, memory.mobiles.join(','), memory.accounts.join(','), memory.ifscs[0] || null, txt]).catch(e => console.error(e));
+            pool.query(`INSERT INTO scam_intel (scam_type, mobile_numbers, bank_accounts, ifsc_code, raw_message) VALUES ($1, $2, $3, $4, $5)`, 
+            [scamType, memory.mobiles.join(','), memory.accounts.join(','), primaryIFSC, txt]).catch(e => console.error(e));
         }
 
-        res.json(finalResponse);
+        res.json(responsePayload);
 
     } catch (error) {
         console.error("Server Error:", error);
-        res.status(500).json({ status: "error", message: "Server Error" });
+        res.status(500).json({ error: "Internal Server Error" });
     }
 });
 
-app.listen(PORT, () => console.log(`🚀 Ramesh 17.0 (No Faltu IP) running on port ${PORT}`));
-
-setInterval(() => {
-    const myUrl = "https://YOUR-APP-NAME.onrender.com"; 
-    if (myUrl.includes("YOUR-APP-NAME")) return; 
-    https.get(myUrl, (res) => {}).on('error', (e) => console.error("Ping Error:", e.message));
-}, 840000);
+app.listen(PORT, () => console.log(`🚀 Ramesh 2.0 (Shortlist Ready) running on port ${PORT}`));
